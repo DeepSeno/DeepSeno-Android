@@ -1,0 +1,213 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (e.g. 1.7.0)'
+        required: true
+        type: string
+      prerelease:
+        description: '测试版 (pre-release)'
+        required: false
+        type: boolean
+        default: false
+
+# Cancel in-progress runs for the same branch / PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # Build APKs (5 flavors)
+  # ────────────────────────────────────────────────────────────
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Toolchain ──────────────────────────────────────────
+      - name: Setup JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: 'gradle'
+
+      # ── Signing keystore ───────────────────────────────────
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::SIGNING_KEYSTORE_BASE64 secret not set"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > deepseno-release.jks
+          echo "Keystore decoded ($(wc -c < deepseno-release.jks) bytes)"
+
+      # ── Set version ────────────────────────────────────────
+      - name: Set version
+        run: |
+          VER="${{ inputs.version }}"
+          sed -i "s/versionName = \".*\"/versionName = \"$VER\"/" app/build.gradle.kts
+          CURRENT_CODE=$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]*')
+          NEW_CODE=$((CURRENT_CODE + 1))
+          sed -i "s/versionCode = .*/versionCode = $NEW_CODE/" app/build.gradle.kts
+          echo "Version set to $VER (code $NEW_CODE)"
+
+      # ── Build all flavors ──────────────────────────────────
+      - name: Build release APKs
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          RELAY_SERVER_BASE_URL: ${{ secrets.API_BASE_URL }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      # ── Collect APKs ───────────────────────────────────────
+      - name: Collect APKs
+        run: |
+          mkdir -p artifacts
+          VER="${{ inputs.version }}"
+          for flavor in official xiaomi huawei oppo vivo; do
+            src="app/build/outputs/apk/${flavor}/release"
+            if [ -d "$src" ]; then
+              apk=$(find "$src" -name "*.apk" | head -1)
+              if [ -n "$apk" ]; then
+                dst="artifacts/deepseno-v${VER}-${flavor}.apk"
+                cp "$apk" "$dst"
+                echo "✅ $flavor → $dst ($(du -h "$dst" | cut -f1))"
+              fi
+            fi
+          done
+          ls -lh artifacts/
+
+      # ── Upload build artifacts ─────────────────────────────
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseno-android
+          path: artifacts/*.apk
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────
+  # GitHub Release + Upload to release server
+  # ────────────────────────────────────────────────────────────
+  release:
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Compute tag name
+        id: tag
+        run: |
+          VER="${{ inputs.version }}"
+          if ${{ inputs.prerelease }}; then
+            TAG="pre-release-${VER}"
+          else
+            TAG="v${VER}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=DeepSeno Android ${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: deepseno-android
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      # ── Create GitHub Release ──────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.name }}
+          body: |
+            **DeepSeno Android ${{ steps.tag.outputs.name }}**
+
+            ${{ inputs.prerelease && '> ⚠️ 这是测试版本，仅供测试使用。' || '' }}
+
+            ### 渠道 APK
+            | 渠道 | 文件 |
+            |------|------|
+            | Official | `deepseno-v${{ inputs.version }}-official.apk` |
+            | 小米 | `deepseno-v${{ inputs.version }}-xiaomi.apk` |
+            | 华为 | `deepseno-v${{ inputs.version }}-huawei.apk` |
+            | OPPO | `deepseno-v${{ inputs.version }}-oppo.apk` |
+            | vivo | `deepseno-v${{ inputs.version }}-vivo.apk` |
+          prerelease: ${{ inputs.prerelease }}
+          draft: false
+          files: artifacts/*.apk
+          fail_on_unmatched_files: true
+
+      # ── Push to release server ─────────────────────────────
+      - name: Push to release server
+        env:
+          API_BASE: ${{ secrets.API_BASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.RELEASE_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.RELEASE_ADMIN_PASSWORD }}
+        run: |
+          [ -z "${ADMIN_EMAIL:-}" ] && echo "[Release] ADMIN_EMAIL not set, skipping" && exit 0
+          set -e
+          echo "[Release] Logging in..."
+          TOKEN=$(curl -sf "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
+          [ -z "$TOKEN" ] && echo "Login failed" && exit 1
+
+          rm -f /tmp/confirm.json
+          echo '{"files":[' > /tmp/confirm.json
+          first=true
+
+          upload_file() {
+            local f="$1"
+            local fname fsize resp cdn_url
+            fname=$(basename "$f")
+            fsize=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
+            echo "[Release] Uploading $fname (${fsize} bytes)..."
+
+            resp=$(curl -sf "$API_BASE/admin/releases/upload-url" \
+              -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+              -d "{\"files\":[{\"filename\":\"$fname\",\"content_type\":\"application/vnd.android.package-archive\",\"size\":$fsize}]}")
+
+            cdn_url=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('cdn_url',''))")
+            presigned=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('presigned_url',''))")
+
+            curl -sf -X PUT -T "$f" "$presigned"
+            echo "[Release] OK, CDN: $cdn_url"
+
+            [ "$first" = true ] && first=false || echo "," >> /tmp/confirm.json
+            echo -n "{\"filename\":\"$fname\",\"cdn_url\":\"$cdn_url\",\"size\":$fsize,\"checksum\":\"\"}" >> /tmp/confirm.json
+          }
+
+          for f in artifacts/*.apk; do
+            [ -f "$f" ] || continue
+            upload_file "$f"
+          done
+
+          echo "]}" >> /tmp/confirm.json
+          echo "[Release] Confirming uploads..."
+          curl -sf "$API_BASE/admin/releases/confirm-upload" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/confirm.json
+          echo "[Release] Confirmed!"

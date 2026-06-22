@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build
+
+# Build outputs and archives (large binaries, not tracked)
+/release-apks/
+/submission-package.tar.gz
+/submission-package.zip
+
+# Generated 软著 PDFs (regenerate via scripts/conv-pdf.sh)
+/submission-package/01-software-copyright/pdf/
+
+# === Sensitive configuration ===
+.env
+*.jks
+*.keystore
+
+# === AI context files ===
+CLAUDE.md

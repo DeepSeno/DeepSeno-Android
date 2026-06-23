@@ -196,7 +196,7 @@ jobs:
             cdn_url=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('cdn_url',''))")
             presigned=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('presigned_url',''))")
 
-            curl $CURL_OPTS --max-time 300 -X PUT -T "$f" "$presigned"
+            curl $CURL_OPTS --max-time 600 -X PUT -T "$f" "$presigned"
             echo "[Release] OK, CDN: $cdn_url"
 
             [ "$first" = true ] && first=false || echo "," >> /tmp/confirm.json

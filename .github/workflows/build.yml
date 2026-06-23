@@ -166,13 +166,17 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.RELEASE_ADMIN_PASSWORD }}
         run: |
           [ -z "${ADMIN_EMAIL:-}" ] && echo "[Release] ADMIN_EMAIL not set, skipping" && exit 0
+          [ -z "${API_BASE:-}" ] && echo "[Release] API_BASE_URL not set, skipping" && exit 0
           set -e
+
+          CURL_OPTS="--connect-timeout 10 --max-time 30 -sf"
+
           echo "[Release] Logging in..."
-          TOKEN=$(curl -sf "$API_BASE/auth/login" \
+          TOKEN=$(curl $CURL_OPTS "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
             -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | \
-            python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
-          [ -z "$TOKEN" ] && echo "Login failed" && exit 1
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))") || true
+          [ -z "$TOKEN" ] && echo "[Release] Login failed, skipping upload" && exit 0
 
           rm -f /tmp/confirm.json
           echo '{"files":[' > /tmp/confirm.json
@@ -185,14 +189,14 @@ jobs:
             fsize=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
             echo "[Release] Uploading $fname (${fsize} bytes)..."
 
-            resp=$(curl -sf "$API_BASE/admin/releases/upload-url" \
+            resp=$(curl $CURL_OPTS "$API_BASE/admin/releases/upload-url" \
               -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
               -d "{\"files\":[{\"filename\":\"$fname\",\"content_type\":\"application/vnd.android.package-archive\",\"size\":$fsize}]}")
 
             cdn_url=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('cdn_url',''))")
             presigned=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('presigned_url',''))")
 
-            curl -sf -X PUT -T "$f" "$presigned"
+            curl $CURL_OPTS --max-time 300 -X PUT -T "$f" "$presigned"
             echo "[Release] OK, CDN: $cdn_url"
 
             [ "$first" = true ] && first=false || echo "," >> /tmp/confirm.json
@@ -206,7 +210,7 @@ jobs:
 
           echo "]}" >> /tmp/confirm.json
           echo "[Release] Confirming uploads..."
-          curl -sf "$API_BASE/admin/releases/confirm-upload" \
+          curl $CURL_OPTS "$API_BASE/admin/releases/confirm-upload" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d @/tmp/confirm.json

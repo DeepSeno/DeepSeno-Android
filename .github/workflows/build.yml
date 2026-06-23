@@ -107,7 +107,7 @@ jobs:
   release:
     needs: build-apk
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     permissions:
       contents: write
@@ -215,7 +215,8 @@ jobs:
             echo -n "{\"filename\":\"$fname\",\"cdn_url\":\"$cdn_url\",\"size\":$fsize,\"checksum\":\"\"}" >> /tmp/confirm.json
           }
 
-          for f in artifacts/*.apk; do
+          # Only upload the official flavor (server stores one record per version+platform)
+          for f in artifacts/deepseno-v*-official.apk; do
             [ -f "$f" ] || continue
             upload_file "$f"
           done

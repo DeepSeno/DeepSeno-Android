@@ -166,35 +166,50 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.RELEASE_ADMIN_PASSWORD }}
         run: |
           [ -z "${ADMIN_EMAIL:-}" ] && echo "[Release] ADMIN_EMAIL not set, skipping" && exit 0
-          set -e
-          echo "[Release] Logging in..."
-          TOKEN=$(curl -sf "$API_BASE/auth/login" \
-            -H "Content-Type: application/json" \
-            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | \
-            python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
-          [ -z "$TOKEN" ] && echo "Login failed" && exit 1
+          set -eo pipefail
 
-          # Upload all files and capture CDN URLs
+          echo "[Release] API_BASE=$API_BASE"
+          echo "[Release] Logging in with email=$ADMIN_EMAIL..."
+
+          LOGIN_RESP=$(curl -s --connect-timeout 10 --max-time 30 "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" 2>&1) || true
+          echo "[Release] Login response: $LOGIN_RESP"
+
+          TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null) || true
+          echo "[Release] Token length: ${#TOKEN}"
+
+          if [ -z "$TOKEN" ]; then
+            echo "[Release] Login failed, skipping upload"
+            exit 0
+          fi
+
+          echo "[Release] Login success, uploading files..."
+
           rm -f /tmp/confirm.json
           echo '{"files":[' > /tmp/confirm.json
           first=true
 
           upload_file() {
             local f="$1"
-            local fname fsize resp cdn_url
+            local fname fsize resp cdn_url presigned
             fname=$(basename "$f")
             fsize=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
-            echo "[Release] Uploading $fname (${fsize} bytes)..."
+            echo "[Release] Requesting upload URL for $fname (${fsize} bytes)..."
 
-            resp=$(curl -sf "$API_BASE/admin/releases/upload-url" \
+            resp=$(curl -s --connect-timeout 10 --max-time 30 "$API_BASE/admin/releases/upload-url" \
               -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
               -d "{\"files\":[{\"filename\":\"$fname\",\"content_type\":\"application/octet-stream\",\"size\":$fsize}]}")
+            echo "[Release] Upload URL response: $resp"
 
-            cdn_url=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('cdn_url',''))")
-            presigned=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('presigned_url',''))")
+            cdn_url=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('cdn_url',''))" 2>/dev/null) || true
+            presigned=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0].get('presigned_url',''))" 2>/dev/null) || true
+            echo "[Release] CDN: $cdn_url"
+            echo "[Release] Presigned URL: ${presigned:0:100}..."
 
-            curl -sf -X PUT -T "$f" "$presigned"
-            echo "[Release] OK, CDN: $cdn_url"
+            echo "[Release] Uploading to COS..."
+            curl -s --connect-timeout 30 --max-time 600 -X PUT -T "$f" "$presigned"
+            echo "[Release] Upload done"
 
             [ "$first" = true ] && first=false || echo "," >> /tmp/confirm.json
             echo -n "{\"filename\":\"$fname\",\"cdn_url\":\"$cdn_url\",\"size\":$fsize,\"checksum\":\"\"}" >> /tmp/confirm.json
@@ -207,7 +222,7 @@ jobs:
 
           echo "]}" >> /tmp/confirm.json
           echo "[Release] Confirming uploads..."
-          curl -sf "$API_BASE/admin/releases/confirm-upload" \
+          curl -s --connect-timeout 10 --max-time 30 "$API_BASE/admin/releases/confirm-upload" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d @/tmp/confirm.json

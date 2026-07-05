@@ -1,5 +1,13 @@
 # DeepSeno Android — Project Context
 
+## Project Family
+- This repository (`deepseno-android`) is the DeepSeno Android project.
+- Sibling repositories under `/Users/daiqiang/Project`:
+  - `deepseno-ios` — DeepSeno iOS project.
+  - `deepseno` — DeepSeno desktop/PC client project.
+  - `voicebrain-web` — DeepSeno backend/web project; it may not exist in every local checkout.
+- `AGENTS.md` is the canonical assistant guidance file for this repository. Legacy `CLAUDE.md` content, if it appears, should be merged here and removed.
+
 ## Project
 DeepSeno Android companion app for the voice-powered "second brain" desktop app. Captures audio, photos, video, text memos and syncs to desktop via local network.
 

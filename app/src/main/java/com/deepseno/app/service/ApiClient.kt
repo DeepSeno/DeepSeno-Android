@@ -92,7 +92,6 @@ class ApiClient @Inject constructor(
 
     fun configureRelay(
         serverBaseUrl: String,
-        licenseKey: String,
         machineId: String,
         aesKey: ByteArray,
         lanToken: String,

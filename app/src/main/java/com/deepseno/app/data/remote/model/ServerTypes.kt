@@ -37,7 +37,6 @@ data class ConnectionInfo(
 
 @Serializable
 data class RelayInfo(
-    val key: String = "",    // License key
     val mid: String = "",    // Machine ID
     val pub: String = "",    // Desktop's ECDH public key (base64)
     val nonce: String = "",  // Pairing nonce (base64)

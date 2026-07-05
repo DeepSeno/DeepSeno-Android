@@ -1,6 +1,7 @@
 package com.enmooy.deepseno.service
 
 import android.content.SharedPreferences
+import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import com.enmooy.deepseno.BuildConfig
@@ -11,6 +12,7 @@ import com.enmooy.deepseno.service.relay.RelayTunnel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.decodeFromString
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -103,39 +105,19 @@ class ConnectionManager @Inject constructor(
      * Automatically chooses the best path: LAN first, relay if available.
      */
     fun connectFromQR(jsonString: String): Boolean {
+        val raw = jsonString.trim()
 
         // Handle deepseno://pair?... URLs
-        if (jsonString.startsWith("deepseno://pair?")) {
-            return handlePairUrl(jsonString)
+        if (raw.startsWith("deepseno://pair?")) {
+            return handlePairUrl(raw)
+        }
+
+        parsePairingLink(raw)?.let { info ->
+            return connect(info)
         }
 
         return try {
-            val info = json.decodeFromString<ConnectionInfo>(jsonString)
-            // Save token immediately
-            prefs.edit().putString(KEY_TOKEN, info.token).apply()
-            currentToken = info.token
-            currentHost = info.host
-            currentPort = info.port
-
-            // Cancel any in-progress connection attempt
-            connectJob?.cancel()
-
-            // Try LAN first (lower latency, no server dependency), fall back to relay
-            connectJob = CoroutineScope(Dispatchers.IO).launch {
-                val lanReachable = probeLan(info.host, info.port)
-                if (lanReachable) {
-                    Log.d(TAG, "LAN reachable → using LAN ($info.host:$info.port)")
-                    withContext(Dispatchers.Main) {
-                        connectLanDirect(info.host, info.port, info.token)
-                    }
-                } else if (info.relay != null && info.relay.mid.isNotEmpty()) {
-                    Log.d(TAG, "LAN not reachable → falling back to relay")
-                    connectRelay(info.relay)
-                } else {
-                    Log.e(TAG, "Neither LAN nor relay available")
-                }
-            }
-            true
+            connect(json.decodeFromString<ConnectionInfo>(raw))
         } catch (e: Exception) {
             false
         }
@@ -146,18 +128,69 @@ class ConnectionManager @Inject constructor(
 
     // ── Private ────────────────────────────────────────────────
 
+    private fun connect(info: ConnectionInfo): Boolean {
+        // Save token immediately
+        prefs.edit()
+            .putString(KEY_HOST, info.host)
+            .putInt(KEY_PORT, info.port)
+            .putString(KEY_TOKEN, info.token)
+            .apply()
+        currentToken = info.token
+        currentHost = info.host
+        currentPort = info.port
+
+        // Cancel any in-progress connection attempt
+        connectJob?.cancel()
+
+        // Try LAN first (lower latency, no server dependency), fall back to relay
+        connectJob = CoroutineScope(Dispatchers.IO).launch {
+            val hasLan = info.host.isNotBlank() && info.port > 0
+            val lanReachable = hasLan && probeLan(info.host, info.port)
+            if (lanReachable) {
+                Log.d(TAG, "LAN reachable → using LAN (${info.host}:${info.port})")
+                withContext(Dispatchers.Main) {
+                    connectLanDirect(info.host, info.port, info.token)
+                }
+            } else if (info.relay != null && info.relay.mid.isNotEmpty()) {
+                Log.d(TAG, "LAN not reachable → falling back to relay")
+                connectRelay(info.relay)
+            } else {
+                Log.e(TAG, "Neither LAN nor relay available")
+            }
+        }
+        return true
+    }
+
+    private fun parsePairingLink(raw: String): ConnectionInfo? {
+        val uri = try {
+            Uri.parse(raw)
+        } catch (_: Exception) {
+            return null
+        }
+        val scheme = uri.scheme?.lowercase() ?: return null
+        if (scheme != "https" && scheme != "http") return null
+        val normalizedPath = uri.path.orEmpty().trim('/')
+        if (normalizedPath != "mobile/pair" && !normalizedPath.endsWith("/mobile/pair")) return null
+
+        val token = uri.getQueryParameter("token")?.takeIf { it.isNotBlank() } ?: return null
+        val host = uri.getQueryParameter("host").orEmpty()
+        val port = uri.getQueryParameter("port")?.toIntOrNull() ?: 0
+        val relay = buildRelayInfo(uri)
+
+        if ((host.isBlank() || port <= 0) && relay == null) return null
+
+        return ConnectionInfo(
+            host = host,
+            port = port,
+            token = token,
+            fingerprint = uri.getQueryParameter("fingerprint")?.takeIf { it.isNotBlank() },
+            relay = relay,
+        )
+    }
+
     private fun handlePairUrl(url: String): Boolean {
         try {
-            val params = url.substringAfter('?').split('&').associate {
-                val parts = it.split('=', limit = 2)
-                parts[0] to java.net.URLDecoder.decode(parts[1], "UTF-8")
-            }
-            val relay = RelayInfo(
-                key = params["key"] ?: return false,
-                mid = params["mid"] ?: return false,
-                pub = params["pub"] ?: return false,
-                nonce = params["nonce"] ?: return false,
-            )
+            val relay = buildRelayInfo(Uri.parse(url)) ?: return false
             connectRelay(relay)
             return true
         } catch (e: Exception) {
@@ -165,7 +198,23 @@ class ConnectionManager @Inject constructor(
         }
     }
 
-    private     fun connectRelay(relay: RelayInfo) {
+    private fun buildRelayInfo(uri: Uri): RelayInfo? {
+        val mid = firstQueryParameter(uri, "mid", "relay_mid", "relayMid") ?: return null
+        val pub = firstQueryParameter(uri, "pub", "relay_pub", "relayPub") ?: return null
+        val nonce = firstQueryParameter(uri, "nonce", "relay_nonce", "relayNonce") ?: return null
+        if (mid.isBlank() || pub.isBlank() || nonce.isBlank()) return null
+        return RelayInfo(mid = mid, pub = pub, nonce = nonce)
+    }
+
+    private fun firstQueryParameter(uri: Uri, vararg names: String): String? {
+        for (name in names) {
+            val value = uri.getQueryParameter(name)
+            if (!value.isNullOrBlank()) return value
+        }
+        return null
+    }
+
+    private fun connectRelay(relay: RelayInfo) {
         connectJob?.cancel()
         connectJob = CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -210,7 +259,7 @@ class ConnectionManager @Inject constructor(
                 relayTunnel = tunnel
 
                 // Configure relay mode — pass tunnel so proxy requests go through WS
-                apiClient.configureRelay(serverBase, relay.key, relay.mid, aesKey, currentToken, tunnel)
+                apiClient.configureRelay(serverBase, relay.mid, aesKey, currentToken, tunnel)
                 relayActive = true
                 _transportMode.value = "relay"
                 _isConnected.value = true

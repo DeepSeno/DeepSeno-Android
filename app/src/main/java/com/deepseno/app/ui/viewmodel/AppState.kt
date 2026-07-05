@@ -115,7 +115,7 @@ class AppState @Inject constructor(
     ) {
         if (relayInfo != null && relayInfo.mid.isNotEmpty()) {
             connectionManager.connectFromQR(
-                """{"host":"$host","port":$port,"token":"$token","relay":{"key":"${relayInfo.key}","mid":"${relayInfo.mid}","pub":"${relayInfo.pub}","nonce":"${relayInfo.nonce}"}}"""
+                """{"host":"$host","port":$port,"token":"$token","relay":{"mid":"${relayInfo.mid}","pub":"${relayInfo.pub}","nonce":"${relayInfo.nonce}"}}"""
             )
         } else {
             connectionManager.connectFromQR("""{"host":"$host","port":$port,"token":"$token"}""")

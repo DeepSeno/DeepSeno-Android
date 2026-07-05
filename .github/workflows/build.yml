@@ -23,7 +23,7 @@ env:
 
 jobs:
   # ────────────────────────────────────────────────────────────
-  # Build APKs (5 flavors)
+  # Build APK
   # ────────────────────────────────────────────────────────────
   build-apk:
     runs-on: ubuntu-latest
@@ -63,8 +63,8 @@ jobs:
           sed -i "s/versionCode = .*/versionCode = $NEW_CODE/" app/build.gradle.kts
           echo "Version set to $VER (code $NEW_CODE)"
 
-      # ── Build all flavors ──────────────────────────────────
-      - name: Build release APKs
+      # ── Build release APK ──────────────────────────────────
+      - name: Build release APK
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -75,22 +75,20 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── Collect APKs ───────────────────────────────────────
-      - name: Collect APKs
+      # ── Collect APK ────────────────────────────────────────
+      - name: Collect APK
         run: |
           mkdir -p artifacts
           VER="${{ inputs.version }}"
-          for flavor in official xiaomi huawei oppo vivo; do
-            src="app/build/outputs/apk/${flavor}/release"
-            if [ -d "$src" ]; then
-              apk=$(find "$src" -name "*.apk" | head -1)
-              if [ -n "$apk" ]; then
-                dst="artifacts/deepseno-v${VER}-${flavor}.apk"
-                cp "$apk" "$dst"
-                echo "✅ $flavor → $dst ($(du -h "$dst" | cut -f1))"
-              fi
-            fi
-          done
+          src="app/build/outputs/apk/release"
+          apk=$(find "$src" -name "*.apk" | head -1)
+          if [ -z "$apk" ]; then
+            echo "::error::No release APK found in $src"
+            exit 1
+          fi
+          dst="artifacts/deepseno-v${VER}.apk"
+          cp "$apk" "$dst"
+          echo "APK → $dst ($(du -h "$dst" | cut -f1))"
           ls -lh artifacts/
 
       # ── Upload build artifacts ─────────────────────────────
@@ -148,14 +146,8 @@ jobs:
 
             ${{ inputs.prerelease && '> ⚠️ 这是测试版本，仅供测试使用。' || '' }}
 
-            ### 渠道 APK
-            | 渠道 | 文件 |
-            |------|------|
-            | Official | `deepseno-v${{ inputs.version }}-official.apk` |
-            | 小米 | `deepseno-v${{ inputs.version }}-xiaomi.apk` |
-            | 华为 | `deepseno-v${{ inputs.version }}-huawei.apk` |
-            | OPPO | `deepseno-v${{ inputs.version }}-oppo.apk` |
-            | vivo | `deepseno-v${{ inputs.version }}-vivo.apk` |
+            ### APK
+            `deepseno-v${{ inputs.version }}.apk`
           prerelease: ${{ inputs.prerelease }}
           draft: false
           files: artifacts/*.apk
@@ -173,5 +165,4 @@ jobs:
           COS_REGION: ${{ secrets.COS_REGION || 'ap-beijing' }}
           COS_CDN_DOMAIN: ${{ secrets.COS_CDN_DOMAIN }}
         run: |
-          # Only upload the official flavor (server stores one record per version+platform)
-          scripts/upload-release-to-cos.sh artifacts/deepseno-v*-official.apk
+          scripts/upload-release-to-cos.sh artifacts/deepseno-v*.apk

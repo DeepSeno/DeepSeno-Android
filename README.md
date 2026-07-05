@@ -106,18 +106,6 @@ The app uses a `.env` file (not committed) for sensitive configuration:
 
 All signing configuration can also be set via system environment variables.
 
-## Build Flavors
-
-5 product flavors for different distribution channels:
-
-| Flavor | Channel |
-|--------|---------|
-| `official` | Official / Google Play |
-| `xiaomi` | Xiaomi App Store |
-| `huawei` | Huawei AppGallery |
-| `oppo` | OPPO Software Store |
-| `vivo` | vivo App Store |
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

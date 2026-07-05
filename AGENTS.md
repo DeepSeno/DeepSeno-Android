@@ -81,19 +81,12 @@ See `.env.example` for required variables (signing keys, relay server URL).
 ```bash
 ./gradlew assembleRelease
 
-# Output APKs (5 flavors):
-# app/build/outputs/apk/official/release/app-official-release.apk
-# app/build/outputs/apk/xiaomi/release/app-xiaomi-release.apk
-# app/build/outputs/apk/huawei/release/app-huawei-release.apk
-# app/build/outputs/apk/oppo/release/app-oppo-release.apk
-# app/build/outputs/apk/vivo/release/app-vivo-release.apk
+# Output APK:
+# app/build/outputs/apk/release/deepseno-v<version>.apk
 ```
 
 ## Signing
 Signing configuration is read from environment variables (set via `.env` file or system environment). See `.env.example` for details.
-
-## Multi-Channel Flavors
-5 flavors for different app stores: `official`, `xiaomi`, `huawei`, `oppo`, `vivo`
 
 ## Database
 - Room database `deepseno.db`

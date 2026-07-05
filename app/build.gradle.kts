@@ -73,30 +73,6 @@ android {
         }
     }
 
-    flavorDimensions += "channel"
-    productFlavors {
-        create("official") {
-            dimension = "channel"
-            buildConfigField("String", "CHANNEL", "\"official\"")
-        }
-        create("xiaomi") {
-            dimension = "channel"
-            buildConfigField("String", "CHANNEL", "\"xiaomi\"")
-        }
-        create("huawei") {
-            dimension = "channel"
-            buildConfigField("String", "CHANNEL", "\"huawei\"")
-        }
-        create("oppo") {
-            dimension = "channel"
-            buildConfigField("String", "CHANNEL", "\"oppo\"")
-        }
-        create("vivo") {
-            dimension = "channel"
-            buildConfigField("String", "CHANNEL", "\"vivo\"")
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -110,8 +86,7 @@ android {
         variant.outputs.all {
             val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
             val versionName = variant.versionName
-            val flavor = variant.flavorName
-            output.outputFileName = "deepseno-v${versionName}-${flavor}.apk"
+            output.outputFileName = "deepseno-v${versionName}.apk"
         }
     }
 

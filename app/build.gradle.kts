@@ -47,8 +47,8 @@ android {
         applicationId = "com.enmooy.deepseno"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.6.1"
+        versionCode = 11
+        versionName = "1.6.3"
         // Relay server URL from .env
         buildConfigField("String", "RELAY_SERVER_BASE_URL",
             "\"${getSecret("RELAY_SERVER_BASE_URL") ?: ""}\"")

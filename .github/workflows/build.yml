@@ -7,6 +7,10 @@ on:
         description: '版本号 (e.g. 1.7.0)'
         required: true
         type: string
+      version_code:
+        description: 'Android versionCode（必须大于已发布版本）'
+        required: true
+        type: number
       prerelease:
         description: '测试版 (pre-release)'
         required: false
@@ -57,11 +61,10 @@ jobs:
       - name: Set version
         run: |
           VER="${{ inputs.version }}"
+          VERSION_CODE="${{ inputs.version_code }}"
           sed -i "s/versionName = \".*\"/versionName = \"$VER\"/" app/build.gradle.kts
-          CURRENT_CODE=$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]*')
-          NEW_CODE=$((CURRENT_CODE + 1))
-          sed -i "s/versionCode = .*/versionCode = $NEW_CODE/" app/build.gradle.kts
-          echo "Version set to $VER (code $NEW_CODE)"
+          sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" app/build.gradle.kts
+          echo "Version set to $VER (code $VERSION_CODE)"
 
       # ── Build release APK ──────────────────────────────────
       - name: Build release APK

@@ -16,6 +16,7 @@ import retrofit2.Retrofit
 import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,9 +58,12 @@ class ApiClient @Inject constructor(
 
         val method = original.method
         val path = original.url.encodedPath + (original.url.encodedQuery?.let { "?$it" } ?: "")
+        // Real HTTP servers normalize header names case-insensitively. Our encrypted
+        // proxy dispatches directly into Express, so preserve that behavior explicitly;
+        // otherwise X-Filename is missed and the desktop falls back to a .wav name.
         val headers = mutableMapOf<String, String>()
-        original.headers.forEach { (k, v) -> headers[k] = v }
-        if (token.isNotEmpty()) headers["Authorization"] = "Bearer $token"
+        original.headers.forEach { (k, v) -> headers[k.lowercase(Locale.ROOT)] = v }
+        if (token.isNotEmpty()) headers["authorization"] = "Bearer $token"
 
         val body: ByteArray? = if (original.body != null) {
             val buffer = okio.Buffer(); original.body!!.writeTo(buffer); buffer.readByteArray()
